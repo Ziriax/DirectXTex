@@ -76,7 +76,8 @@ enum OPTIONS
     OPT_TA_MIRROR,
     OPT_TONEMAP,
     OPT_FILELIST,
-    OPT_MAX
+	OPT_NORESIZE,
+	OPT_MAX
 };
 
 static_assert(OPT_MAX <= 32, "dwOptions is a DWORD bitfield");
@@ -129,6 +130,8 @@ const SValue g_pOptions [] =
     { L"mirror",    OPT_TA_MIRROR },
     { L"tonemap",   OPT_TONEMAP },
     { L"flist",     OPT_FILELIST },
+	{ L"noresize",  OPT_NORESIZE },
+
     { nullptr,      0 }
 };
 
@@ -514,7 +517,7 @@ namespace
 //--------------------------------------------------------------------------------------
 #pragma prefast(disable : 28198, "Command-line tool, frees all memory on exit")
 
-int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
+int run(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
 {
     // Parameters and defaults
     size_t width = 0;
@@ -1067,45 +1070,48 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
         }
 
         // --- Resize ------------------------------------------------------------------
-        if (!width)
-        {
-            width = info.width;
-        }
-        if (!height)
-        {
-            height = info.height;
-        }
-        if (info.width != width || info.height != height)
-        {
-            std::unique_ptr<ScratchImage> timage(new (std::nothrow) ScratchImage);
-            if (!timage)
-            {
-                wprintf(L"\nERROR: Memory allocation failed\n");
-                return 1;
-            }
+		if ((dwOptions & (1 << OPT_NORESIZE)) == 0)
+		{
+			if (!width)
+			{
+				width = info.width;
+			}
+			if (!height)
+			{
+				height = info.height;
+			}
+			if (info.width != width || info.height != height)
+			{
+				std::unique_ptr<ScratchImage> timage(new (std::nothrow) ScratchImage);
+				if (!timage)
+				{
+					wprintf(L"\nERROR: Memory allocation failed\n");
+					return 1;
+				}
 
-            hr = Resize(image->GetImages(), image->GetImageCount(), image->GetMetadata(), width, height, dwFilter | dwFilterOpts, *timage.get());
-            if (FAILED(hr))
-            {
-                wprintf(L" FAILED [resize] (%x)\n", hr);
-                return 1;
-            }
+				hr = Resize(image->GetImages(), image->GetImageCount(), image->GetMetadata(), width, height, dwFilter | dwFilterOpts, *timage.get());
+				if (FAILED(hr))
+				{
+					wprintf(L" FAILED [resize] (%x)\n", hr);
+					return 1;
+				}
 
-            const TexMetadata& tinfo = timage->GetMetadata();
+				const TexMetadata& tinfo = timage->GetMetadata();
 
-            assert(tinfo.width == width && tinfo.height == height && tinfo.mipLevels == 1);
-            info.width = tinfo.width;
-            info.height = tinfo.height;
-            info.mipLevels = 1;
+				assert(tinfo.width == width && tinfo.height == height && tinfo.mipLevels == 1);
+				info.width = tinfo.width;
+				info.height = tinfo.height;
+				info.mipLevels = 1;
 
-            assert(info.depth == tinfo.depth);
-            assert(info.arraySize == tinfo.arraySize);
-            assert(info.miscFlags == tinfo.miscFlags);
-            assert(info.format == tinfo.format);
-            assert(info.dimension == tinfo.dimension);
+				assert(info.depth == tinfo.depth);
+				assert(info.arraySize == tinfo.arraySize);
+				assert(info.miscFlags == tinfo.miscFlags);
+				assert(info.format == tinfo.format);
+				assert(info.dimension == tinfo.dimension);
 
-            image.swap(timage);
-        }
+				image.swap(timage);
+			}
+		}
 
         // --- Tonemap (if requested) --------------------------------------------------
         if (dwOptions & (1 << OPT_TONEMAP))
@@ -1230,9 +1236,9 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
     switch (dwCommand)
     {
     case CMD_CUBE:
-        if (images != 6)
+        if (images % 6 != 0)
         {
-            wprintf(L"\nERROR: cube requires six images to form the faces of the cubemap\n");
+            wprintf(L"\nERROR: cube requires a multiple of six images to form the faces of the cubemap\n");
             return 1;
         }
         break;
@@ -1454,8 +1460,11 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
             break;
 
         case CMD_CUBE:
-        case CMD_CUBEARRAY:
-            hr = result.InitializeCubeFromImages(&imageArray[0], imageArray.size());
+			hr = result.InitializeCubeFromImages(&imageArray[0], imageArray.size(), 6);
+			break;
+
+		case CMD_CUBEARRAY:
+            hr = result.InitializeCubeFromImages(&imageArray[0], imageArray.size(), imageArray.size());
             break;
         }
 
@@ -1493,4 +1502,13 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
     }
 
     return 0;
+}
+
+int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
+{
+	int result = run(argc, argv);
+#ifdef DEBUG
+	getchar();
+#endif
+	return result;
 }

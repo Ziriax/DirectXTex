@@ -2969,7 +2969,7 @@ namespace
 //--------------------------------------------------------------------------------------
 #pragma prefast(disable : 28198, "Command-line tool, frees all memory on exit")
 
-int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
+int run(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
 {
     // Parameters and defaults
     DWORD dwFilter = TEX_FILTER_DEFAULT;
@@ -3775,4 +3775,13 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
     }
 
     return 0;
+}
+
+int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
+{
+	int result = run(argc, argv);
+#ifdef DEBUG
+	getchar();
+#endif
+	return result;
 }
