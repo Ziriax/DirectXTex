@@ -382,7 +382,6 @@ HRESULT ScratchImage::Initialize2D(DXGI_FORMAT fmt, size_t width, size_t height,
     m_metadata.miscFlags2 = 0;
     m_metadata.format = fmt;
     m_metadata.dimension = TEX_DIMENSION_TEXTURE2D;
-
     size_t pixelSize, nimages;
     _DetermineImageArray(m_metadata, flags, nimages, pixelSize);
 
@@ -516,67 +515,84 @@ HRESULT ScratchImage::InitializeFromImage(const Image& srcImage, bool allow1D, D
 }
 
 _Use_decl_annotations_
-HRESULT ScratchImage::InitializeArrayFromImages(const Image* images, size_t nImages, bool allow1D, DWORD flags)
+HRESULT ScratchImage::InitializeArrayFromImages(const Image* images, size_t nImages, size_t nImagesPerMipLevel, bool allow1D, DWORD flags)
 {
     if (!images || !nImages)
         return E_INVALIDARG;
 
     DXGI_FORMAT format = images[0].format;
-    size_t width = images[0].width;
-    size_t height = images[0].height;
+	size_t nMipLevels = nImages / nImagesPerMipLevel;
 
-    for (size_t index = 0; index < nImages; ++index)
-    {
-        if (!images[index].pixels)
-            return E_POINTER;
+	size_t width0 = images[0].width;
+	size_t height0 = images[0].height;
 
-        if (images[index].format != format || images[index].width != width || images[index].height != height)
-        {
-            // All images must be the same format, width, and height
-            return E_FAIL;
-        }
+	HRESULT hr = (height0 > 1 || !allow1D)
+		? Initialize2D(format, width0, height0, nImagesPerMipLevel, nMipLevels, flags)
+		: Initialize1D(format, width0, nImagesPerMipLevel, nMipLevels, flags);
+
+	if (FAILED(hr))
+		return hr;
+
+	for (size_t indexInLevel = 0; indexInLevel < nImagesPerMipLevel; ++indexInLevel)
+	{
+		for (size_t mipLevel = 0; mipLevel < nMipLevels; ++mipLevel)
+		{
+			size_t index = m_metadata.ComputeIndex(mipLevel, indexInLevel, 0);
+
+			if (!images[index].pixels)
+				return E_POINTER;
+
+			size_t width = images[0].width >> mipLevel;
+			size_t height = images[0].height >> mipLevel;
+
+			if (images[index].format != format || 
+				images[index].width != width || 
+				images[index].height != height)
+			{
+				// All images must be the same format and have correctly scaled width and height
+				return E_FAIL;
+			}
+		}
     }
 
-    HRESULT hr = (height > 1 || !allow1D)
-        ? Initialize2D(format, width, height, nImages, 1, flags)
-        : Initialize1D(format, width, nImages, 1, flags);
+	for (size_t indexInLevel = 0; indexInLevel < nImagesPerMipLevel; ++indexInLevel)
+	{
+		for (size_t mipLevel = 0; mipLevel < nMipLevels; ++mipLevel)
+		{
+			size_t index = m_metadata.ComputeIndex(mipLevel, indexInLevel, 0);
 
-    if (FAILED(hr))
-        return hr;
+			auto sptr = reinterpret_cast<const uint8_t*>(images[index].pixels);
+			if (!sptr)
+				return E_POINTER;
 
-    size_t rowCount = ComputeScanlines(format, height);
-    if (!rowCount)
-        return E_UNEXPECTED;
+			assert(index < m_nimages);
+			auto dptr = reinterpret_cast<uint8_t*>(m_image[index].pixels);
+			if (!dptr)
+				return E_POINTER;
 
-    for (size_t index = 0; index < nImages; ++index)
-    {
-        auto sptr = reinterpret_cast<const uint8_t*>(images[index].pixels);
-        if (!sptr)
-            return E_POINTER;
+			size_t spitch = images[index].rowPitch;
+			size_t dpitch = m_image[index].rowPitch;
 
-        assert(index < m_nimages);
-        auto dptr = reinterpret_cast<uint8_t*>(m_image[index].pixels);
-        if (!dptr)
-            return E_POINTER;
+			size_t size = std::min<size_t>(dpitch, spitch);
 
-        size_t spitch = images[index].rowPitch;
-        size_t dpitch = m_image[index].rowPitch;
+			size_t rowCount = ComputeScanlines(format, height0 >> mipLevel);
+			if (!rowCount)
+				return E_UNEXPECTED;
 
-        size_t size = std::min<size_t>(dpitch, spitch);
-
-        for (size_t y = 0; y < rowCount; ++y)
-        {
-            memcpy_s(dptr, dpitch, sptr, size);
-            sptr += spitch;
-            dptr += dpitch;
-        }
-    }
+			for (size_t y = 0; y < rowCount; ++y)
+			{
+				memcpy_s(dptr, dpitch, sptr, size);
+				sptr += spitch;
+				dptr += dpitch;
+			}
+		}
+	}
 
     return S_OK;
 }
 
 _Use_decl_annotations_
-HRESULT ScratchImage::InitializeCubeFromImages(const Image* images, size_t nImages, DWORD flags)
+HRESULT ScratchImage::InitializeCubeFromImages(const Image* images, size_t nImages, size_t nImagesPerMipLevel, DWORD flags)
 {
     if (!images || !nImages)
         return E_INVALIDARG;
@@ -585,7 +601,7 @@ HRESULT ScratchImage::InitializeCubeFromImages(const Image* images, size_t nImag
     if ((nImages % 6) != 0)
         return E_INVALIDARG;
 
-    HRESULT hr = InitializeArrayFromImages(images, nImages, false, flags);
+    HRESULT hr = InitializeArrayFromImages(images, nImages, nImagesPerMipLevel, false, flags);
     if (FAILED(hr))
         return hr;
 
